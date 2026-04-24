@@ -148,35 +148,6 @@ void *handle_client(void *arg) {
     client_t *client = (client_t *)arg;
     char buffer[MAX_MSG_LENGTH + 100];
     
-    /* TODO: Implement client message loop
-     * 
-     * Steps:
-     * 1. Loop: read data from client->socket using recv()
-     * 2. Check if bytes <= 0 (disconnect or error) -> break
-     * 3. Null-terminate the buffer: buffer[bytes] = '\0'
-     * 4. Declare: message_t msg;
-     * 5. Call parse_message(buffer, &msg)
-     * 6. If parse fails (returns -1):
-     *    - Create error message: create_err_message(ERR_UNREADABLE, "Invalid message format")
-     *    - Send error to client
-     *    - Free the error message
-     *    - Close connection and break (error 0 is fatal!)
-     * 7. Check msg.code and route to handler:
-     *    - if strcmp(msg.code, MSG_NAM) == 0: handle_nam_message(client, msg.body)
-     *    - if strcmp(msg.code, MSG_SET) == 0: handle_set_message(client, msg.body)
-     *    - if strcmp(msg.code, MSG_MSG) == 0: handle_msg_message(client, msg.body)
-     *    - if strcmp(msg.code, MSG_WHO) == 0: handle_who_message(client, msg.body)
-     *    - else: send ERR_UNREADABLE and close (unknown message type)
-     * 8. Before sending ANY message, check if client is authenticated!
-     *    - Only NAM is allowed before authentication
-     *    - For other messages, if !client->authenticated, send error and continue
-     * 9. Call free_message(&msg) to free msg.body after handling
-     * 10. On loop exit: remove_client(), close socket, free client
-     * 
-     * IMPORTANT: recv() might not read the entire message at once!
-     * For a complete implementation, you may need to buffer partial messages.
-     */
-    
     while (1) {
         // Read message from client
         ssize_t bytes = recv(client->socket, buffer, sizeof(buffer) - 1, 0);
@@ -187,19 +158,51 @@ void *handle_client(void *arg) {
         
         buffer[bytes] = '\0';
         
-        // TODO: Uncomment and complete the implementation below:
-        // message_t msg;
-        // if (parse_message(buffer, &msg) < 0) {
-        //     char *err = create_err_message(ERR_UNREADABLE, "Invalid message format");
-        //     send_to_client(client, err);
-        //     free(err);
-        //     break;  // Error 0 is fatal
-        // }
+        // Parse the message
+        message_t msg;
+        if (parse_message(buffer, &msg) < 0) {
+            // Send error 0 (unreadable) - this is fatal
+            char *err = create_err_message(ERR_UNREADABLE, "Invalid message format");
+            if (err) {
+                send_to_client(client, err);
+                free(err);
+            }
+            break;  // Error 0 is fatal - close connection
+        }
         
-        // TODO: Route to appropriate handler based on msg.code
-        // TODO: Check authentication status
-        // TODO: Call free_message(&msg) when done
+        // Check authentication - only NAM is allowed before authentication
+        if (!client->authenticated && strcmp(msg.code, MSG_NAM) != 0) {
+            char *err = create_err_message(ERR_UNREADABLE, "Must authenticate first");
+            if (err) {
+                send_to_client(client, err);
+                free(err);
+            }
+            free_message(&msg);
+            break;  // Error 0 is fatal
+        }
         
+        // Route to appropriate handler based on message code
+        if (strcmp(msg.code, MSG_NAM) == 0) {
+            handle_nam_message(client, msg.body);
+        } else if (strcmp(msg.code, MSG_SET) == 0) {
+            handle_set_message(client, msg.body);
+        } else if (strcmp(msg.code, MSG_MSG) == 0) {
+            handle_msg_message(client, msg.body);
+        } else if (strcmp(msg.code, MSG_WHO) == 0) {
+            handle_who_message(client, msg.body);
+        } else {
+            // Unknown message type - send error 0 (fatal)
+            char *err = create_err_message(ERR_UNREADABLE, "Unknown message type");
+            if (err) {
+                send_to_client(client, err);
+                free(err);
+            }
+            free_message(&msg);
+            break;
+        }
+        
+        // Free the message body
+        free_message(&msg);
     }
     
     // Clean up
@@ -274,105 +277,167 @@ void send_to_client(client_t *client, const char *message) {
 }
 
 void handle_nam_message(client_t *client, const char *body) {
-    /* TODO: Implement NAM message handling
-     * Body format: "screen_name|"
-     * 
-     * Steps:
-     * 1. Extract screen name from body (remove trailing '|'):
-     *    - Copy body to temp buffer
-     *    - Find the '|' and replace with '\0', or use strtok
-     * 2. Validate screen name:
-     *    - Call validate_screen_name(name)
-     *    - If invalid, determine why:
-     *      * If contains illegal chars -> send ERR_ILLEGAL_CHAR
-     *      * If too long (>32) or empty -> send ERR_TOO_LONG
-     *    - Create error with create_err_message(code, "explanation")
-     *    - Send error with send_to_client(client, error_msg)
-     *    - Free error message and return
-     * 3. Check if name already in use:
-     *    - Call find_client_by_name(name)
-     *    - If found (not NULL) -> send ERR_NAME_IN_USE
-     * 4. If valid and unique:
-     *    - strcpy(client->screen_name, name)
-     *    - client->authenticated = 1
-     *    - Call add_client(client) to add to global list
-     *    - Create welcome message:
-     *      char *welcome = create_msg_message("#all", name, "Welcome to the chat!");
-     *    - Send with send_to_client(client, welcome)
-     *    - Free welcome message
-     * 
-     * Error message examples:
-     * - create_err_message(ERR_NAME_IN_USE, "Screen name already in use")
-     * - create_err_message(ERR_ILLEGAL_CHAR, "Name contains invalid characters")
-     * - create_err_message(ERR_TOO_LONG, "Name too long (max 32 chars)")
-     */
+    // Extract screen name from body (remove trailing '|')
+    char name[MAX_SCREEN_NAME + 1];
+    strncpy(name, body, sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
+    
+    // Remove trailing '|'
+    char *pipe = strchr(name, '|');
+    if (pipe) *pipe = '\0';
+    
+    // Validate screen name
+    if (!validate_screen_name(name)) {
+        // Determine specific error
+        size_t len = strlen(name);
+        char *err;
+        
+        if (len == 0 || len > MAX_SCREEN_NAME) {
+            err = create_err_message(ERR_TOO_LONG, "Name must be 1-32 characters");
+        } else {
+            err = create_err_message(ERR_ILLEGAL_CHAR, "Name contains invalid characters");
+        }
+        
+        if (err) {
+            send_to_client(client, err);
+            free(err);
+        }
+        return;
+    }
+    
+    // Check if name already in use
+    if (find_client_by_name(name) != NULL) {
+        char *err = create_err_message(ERR_NAME_IN_USE, "Screen name already in use");
+        if (err) {
+            send_to_client(client, err);
+            free(err);
+        }
+        return;
+    }
+    
+    // Valid and unique - set up the client
+    strcpy(client->screen_name, name);
+    client->authenticated = 1;
+    add_client(client);
+    
+    // Send welcome message
+    char *welcome = create_msg_message(ROOM_ALL, name, "Welcome to the chat!");
+    if (welcome) {
+        send_to_client(client, welcome);
+        free(welcome);
+    }
 }
 
 void handle_set_message(client_t *client, const char *body) {
-    /* TODO: Implement SET message handling
-     * Body format: "status|"
-     * 
-     * Steps:
-     * 1. Extract status from body (remove trailing '|')
-     * 2. Validate status:
-     *    - Call validate_status(status)
-     *    - If invalid:
-     *      * If contains chars outside ASCII 32-126 -> send ERR_ILLEGAL_CHAR
-     *      * If too long (>64 chars) -> send ERR_TOO_LONG
-     *    - Send error and return if invalid
-     * 3. Update client's status:
-     *    - strcpy(client->status, status)
-     * 4. If status is non-empty (strlen(status) > 0):
-     *    - Create broadcast message:
-     *      Format: "Bob is now \"Smiling politely\""
-     *      char broadcast[256];
-     *      snprintf(broadcast, sizeof(broadcast), "%s is now \"%s\"",
-     *               client->screen_name, status);
-     *    - Create message: create_msg_message("#all", "#all", broadcast)
-     *    - Call broadcast_message(msg, NULL) to send to all clients
-     *    - Free the message
-     * 
-     * Note: If status is empty, just update it silently (no broadcast)
-     */
+    // Extract status from body (remove trailing '|')
+    char status[MAX_STATUS + 1];
+    strncpy(status, body, sizeof(status) - 1);
+    status[sizeof(status) - 1] = '\0';
+    
+    // Remove trailing '|'
+    char *pipe = strchr(status, '|');
+    if (pipe) *pipe = '\0';
+    
+    // Validate status
+    if (!validate_status(status)) {
+        char *err;
+        size_t len = strlen(status);
+        
+        if (len > MAX_STATUS) {
+            err = create_err_message(ERR_TOO_LONG, "Status must be 0-64 characters");
+        } else {
+            err = create_err_message(ERR_ILLEGAL_CHAR, "Status contains invalid characters");
+        }
+        
+        if (err) {
+            send_to_client(client, err);
+            free(err);
+        }
+        return;
+    }
+    
+    // Update client's status
+    strcpy(client->status, status);
+    
+    // Broadcast status change if non-empty
+    if (strlen(status) > 0) {
+        char broadcast[256];
+        snprintf(broadcast, sizeof(broadcast), "%s is now \"%s\"",
+                 client->screen_name, status);
+        
+        char *msg = create_msg_message(ROOM_ALL, ROOM_ALL, broadcast);
+        if (msg) {
+            broadcast_message(msg, NULL);
+            free(msg);
+        }
+    }
 }
 
 void handle_msg_message(client_t *client, const char *body) {
-    /* TODO: Implement MSG message handling
-     * Body format: "sender|recipient|message|"
-     * 
-     * Steps:
-     * 1. Parse the body to extract three fields:
-     *    - Make a copy of body (strdup) since strtok modifies it
-     *    - char *sender = strtok(copy, "|");    // IGNORE THIS - client could be spoofing!
-     *    - char *recipient = strtok(NULL, "|");
-     *    - char *text = strtok(NULL, "|");
-     *    - Check if recipient and text are not NULL
-     * 2. Validate the message text:
-     *    - Call validate_message_text(text)
-     *    - If invalid:
-     *      * Check if contains chars outside ASCII 32-126 -> ERR_ILLEGAL_CHAR
-     *      * Check if too long (>80 chars) or empty -> ERR_TOO_LONG
-     *    - Send error and return if invalid
-     * 3. Determine recipient and send:
-     *    - If recipient is "#all":
-     *      * Create msg: create_msg_message(client->screen_name, "#all", text)
-     *      * Call broadcast_message(msg, NULL) to send to everyone
-     *      * Free the message
-     *    - Else (private message to specific user):
-     *      * Call find_client_by_name(recipient) to find target
-     *      * If not found -> send ERR_UNKNOWN_RECIPIENT and return
-     *      * If found:
-     *        - Create msg: create_msg_message(client->screen_name, recipient, text)
-     *        - Call send_to_client(target, msg)
-     *        - Free the message
-     * 4. Free the copied body string
-     * 
-     * CRITICAL: Always use client->screen_name as sender, NOT the sender field
-     *           from the message body! This prevents users from impersonating others.
-     */
+    // Parse body to extract sender, recipient, and message text
+    char *copy = strdup(body);
+    if (!copy) return;
+    
+    strtok(copy, "|");                     // Skip sender - client could be spoofing
+    char *recipient = strtok(NULL, "|");
+    char *text = strtok(NULL, "|");
+    
+    if (!recipient || !text) {
+        free(copy);
+        return;
+    }
+    
+    // Validate message text
+    if (!validate_message_text(text)) {
+        char *err;
+        size_t len = strlen(text);
+        
+        if (len == 0 || len > MAX_MESSAGE) {
+            err = create_err_message(ERR_TOO_LONG, "Message must be 1-80 characters");
+        } else {
+            err = create_err_message(ERR_ILLEGAL_CHAR, "Message contains invalid characters");
+        }
+        
+        if (err) {
+            send_to_client(client, err);
+            free(err);
+        }
+        free(copy);
+        return;
+    }
+    
+    // Send message based on recipient
+    if (strcmp(recipient, ROOM_ALL) == 0) {
+        // Broadcast to all users
+        char *msg = create_msg_message(client->screen_name, ROOM_ALL, text);
+        if (msg) {
+            broadcast_message(msg, NULL);
+            free(msg);
+        }
+    } else {
+        // Private message to specific user
+        client_t *target = find_client_by_name(recipient);
+        if (!target) {
+            char *err = create_err_message(ERR_UNKNOWN_RECIPIENT, "User not found");
+            if (err) {
+                send_to_client(client, err);
+                free(err);
+            }
+        } else {
+            char *msg = create_msg_message(client->screen_name, recipient, text);
+            if (msg) {
+                send_to_client(target, msg);
+                free(msg);
+            }
+        }
+    }
+    
+    free(copy);
 }
 
 void handle_who_message(client_t *client, const char *body) {
+    (void)client;  // TODO: Implement WHO message handling
+    (void)body;
     /* TODO: Implement WHO message handling
      * Body format: "target|"
      * 

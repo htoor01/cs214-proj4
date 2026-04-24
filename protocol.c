@@ -13,49 +13,95 @@
 int parse_message(const char *raw, message_t *msg) {
     if (!raw || !msg) return -1;
     
-    /* TODO: Implement message parsing
-     * Format: VERSION|CODE|LENGTH|BODY|
-     * Example: "1|NAM|4|Bob|"
-     * 
-     * Steps:
-     * 1. Make a copy of raw string (use strdup) since strtok modifies it
-     * 2. Use strtok() with delimiter "|" to extract:
-     *    - version field -> copy to msg->version
-     *    - code field -> copy to msg->code (exactly 3 chars)
-     *    - length field -> convert to int with atoi(), store in msg->body_length
-     * 3. After parsing header, calculate where body starts in original string
-     * 4. Allocate msg->body_length bytes for msg->body
-     * 5. Copy exactly msg->body_length bytes from raw into msg->body
-     * 6. Verify the last character in body is '|'
-     * 7. Verify version is "1" (if not, return -1)
-     * 8. Free the duplicated string
-     * 9. Return 0 on success, -1 on any error
-     * 
-     * Hint: The body includes the trailing '|' in its length!
-     */
+    // Make a copy for strtok (it modifies the string)
+    char *copy = strdup(raw);
+    if (!copy) return -1;
     
+    // Parse version field
+    char *version = strtok(copy, "|");
+    if (!version) {
+        free(copy);
+        return -1;
+    }
+    
+    // Verify version is "1"
+    if (strcmp(version, "1") != 0) {
+        free(copy);
+        return -1;
+    }
+    strncpy(msg->version, version, sizeof(msg->version) - 1);
+    msg->version[sizeof(msg->version) - 1] = '\0';
+    
+    // Parse code field (3 characters)
+    char *code = strtok(NULL, "|");
+    if (!code || strlen(code) != 3) {
+        free(copy);
+        return -1;
+    }
+    strncpy(msg->code, code, sizeof(msg->code) - 1);
+    msg->code[sizeof(msg->code) - 1] = '\0';
+    
+    // Parse length field
+    char *length_str = strtok(NULL, "|");
+    if (!length_str) {
+        free(copy);
+        return -1;
+    }
+    msg->body_length = atoi(length_str);
+    
+    if (msg->body_length < 0 || msg->body_length > MAX_MSG_LENGTH) {
+        free(copy);
+        return -1;
+    }
+    
+    // Calculate where the body starts in the original string
+    // Find the position after the third '|'
+    const char *body_start = raw;
+    int pipe_count = 0;
+    while (*body_start && pipe_count < 3) {
+        if (*body_start == '|') pipe_count++;
+        body_start++;
+    }
+    
+    if (pipe_count != 3) {
+        free(copy);
+        return -1;
+    }
+    
+    // Allocate and copy the body
+    msg->body = malloc(msg->body_length + 1);
+    if (!msg->body) {
+        free(copy);
+        return -1;
+    }
+    
+    memcpy(msg->body, body_start, msg->body_length);
+    msg->body[msg->body_length] = '\0';
+    
+    // Verify the body ends with '|'
+    if (msg->body_length == 0 || msg->body[msg->body_length - 1] != '|') {
+        free(msg->body);
+        msg->body = NULL;
+        free(copy);
+        return -1;
+    }
+    
+    free(copy);
     return 0;
 }
 
 char *format_message(const char *code, const char *body) {
     if (!code || !body) return NULL;
     
-    /* NOTE: This function is mostly complete but may need adjustment.
-     * Currently it formats messages as: VERSION|CODE|LENGTH|BODY|
-     * The body parameter should already include the trailing '|' for all fields.
-     * 
-     * TODO: Verify the total_len calculation is correct and adjust if needed.
-     * The current calculation might allocate more space than necessary.
-     * Consider using snprintf with NULL to calculate exact length needed.
-     */
-    
     int body_len = strlen(body);
-    int total_len = 1 + 1 + strlen(code) + 1 + 5 + 1 + body_len + 1;
+    // Calculate exact length: version + | + code + | + length (max 5 digits) + | + body
+    int header_len = snprintf(NULL, 0, "%s|%s|%d|", PROTOCOL_VERSION, code, body_len);
+    int total_len = header_len + body_len + 1;  // +1 for null terminator
     
     char *msg = malloc(total_len);
     if (!msg) return NULL;
     
-    snprintf(msg, total_len, "%s|%s|%d|%s|", PROTOCOL_VERSION, code, body_len, body);
+    snprintf(msg, total_len, "%s|%s|%d|%s", PROTOCOL_VERSION, code, body_len, body);
     
     return msg;
 }
@@ -113,12 +159,22 @@ int validate_message_text(const char *text) {
 
 char *create_nam_message(const char *screen_name) {
     if (!screen_name) return NULL;
-    return format_message(MSG_NAM, (char *)screen_name);
+    
+    // Body format: screen_name|
+    char body[MAX_SCREEN_NAME + 2];
+    snprintf(body, sizeof(body), "%s|", screen_name);
+    
+    return format_message(MSG_NAM, body);
 }
 
 char *create_set_message(const char *status) {
     if (!status) return NULL;
-    return format_message(MSG_SET, (char *)status);
+    
+    // Body format: status|
+    char body[MAX_STATUS + 2];
+    snprintf(body, sizeof(body), "%s|", status);
+    
+    return format_message(MSG_SET, body);
 }
 
 char *create_msg_message(const char *sender, const char *recipient, const char *text) {
@@ -133,7 +189,12 @@ char *create_msg_message(const char *sender, const char *recipient, const char *
 
 char *create_who_message(const char *target) {
     if (!target) return NULL;
-    return format_message(MSG_WHO, (char *)target);
+    
+    // Body format: target|
+    char body[MAX_SCREEN_NAME + 2];
+    snprintf(body, sizeof(body), "%s|", target);
+    
+    return format_message(MSG_WHO, body);
 }
 
 char *create_err_message(int error_code, const char *explanation) {
