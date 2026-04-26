@@ -436,44 +436,84 @@ void handle_msg_message(client_t *client, const char *body) {
 }
 
 void handle_who_message(client_t *client, const char *body) {
-    (void)client;  // TODO: Implement WHO message handling
-    (void)body;
-    /* TODO: Implement WHO message handling
-     * Body format: "target|"
-     * 
-     * Steps:
-     * 1. Extract target from body (remove trailing '|')
-     * 2. If target is "#all":
-     *    - Lock the clients_mutex
-     *    - Allocate a large buffer for response (e.g., 10KB)
-     *    - Iterate through all clients in the global clients list:
-     *      * For each authenticated client:
-     *        - If client has status (strlen(status) > 0):
-     *          Append "name: status\n" to response
-     *        - Else:
-     *          Append "name\n" to response
-     *    - Remove the last '\n' from response
-     *    - Unlock the mutex
-     *    - Create message: create_msg_message("#all", client->screen_name, response)
-     *    - Send to requesting client: send_to_client(client, msg)
-     *    - Free message and response buffer
-     * 3. Else (query specific user):
-     *    - Call find_client_by_name(target)
-     *    - If not found:
-     *      * Send ERR_UNKNOWN_RECIPIENT
-     *      * Return
-     *    - If found:
-     *      * If target has status:
-     *        Format: "target: status"
-     *      * Else:
-     *        Response: "No status"
-     *      * Create message: create_msg_message("#all", client->screen_name, response)
-     *      * Send to client
-     *      * Free message
-     * 
-     * Example responses:
-     * - Single user with status: "Alice: I was here first"
-     * - Single user no status: "No status"
-     * - All users: "Alice: I was here first\nBob: Smiling politely\nCarol"
-     */
+    // Extract target from body (remove trailing '|')
+    char target[MAX_SCREEN_NAME + 10];
+    strncpy(target, body, sizeof(target) - 1);
+    target[sizeof(target) - 1] = '\0';
+    
+    // Remove trailing '|'
+    char *pipe = strchr(target, '|');
+    if (pipe) *pipe = '\0';
+    
+    if (strcmp(target, ROOM_ALL) == 0) {
+        // Query all users in the room
+        char *response = malloc(10240);  // 10KB buffer
+        if (!response) return;
+        
+        response[0] = '\0';
+        int first = 1;
+        
+        pthread_mutex_lock(&clients_mutex);
+        
+        client_t *curr = clients;
+        while (curr) {
+            if (curr->authenticated) {
+                if (!first) {
+                    strcat(response, "\n");
+                }
+                first = 0;
+                
+                if (strlen(curr->status) > 0) {
+                    // Format: "name: status"
+                    char line[MAX_SCREEN_NAME + MAX_STATUS + 10];
+                    snprintf(line, sizeof(line), "%s: %s", curr->screen_name, curr->status);
+                    strcat(response, line);
+                } else {
+                    // Just the name
+                    strcat(response, curr->screen_name);
+                }
+            }
+            curr = curr->next;
+        }
+        
+        pthread_mutex_unlock(&clients_mutex);
+        
+        // Send response to requesting client
+        char *msg = create_msg_message(ROOM_ALL, client->screen_name, response);
+        if (msg) {
+            send_to_client(client, msg);
+            free(msg);
+        }
+        
+        free(response);
+    } else {
+        // Query specific user
+        client_t *target_client = find_client_by_name(target);
+        
+        if (!target_client) {
+            char *err = create_err_message(ERR_UNKNOWN_RECIPIENT, "User not found");
+            if (err) {
+                send_to_client(client, err);
+                free(err);
+            }
+            return;
+        }
+        
+        char response[MAX_SCREEN_NAME + MAX_STATUS + 10];
+        
+        if (strlen(target_client->status) > 0) {
+            // Format: "name: status"
+            snprintf(response, sizeof(response), "%s: %s", 
+                     target_client->screen_name, target_client->status);
+        } else {
+            // No status
+            strcpy(response, "No status");
+        }
+        
+        char *msg = create_msg_message(ROOM_ALL, client->screen_name, response);
+        if (msg) {
+            send_to_client(client, msg);
+            free(msg);
+        }
+    }
 }
