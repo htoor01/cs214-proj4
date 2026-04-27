@@ -120,7 +120,7 @@ int main(int argc, char *argv[]) {
             if (recipient && text) {
                 char body[BUFFER_SIZE];
                 snprintf(body, sizeof(body), "||%s|%s|", recipient, text);
-                snprintf(message, sizeof(message), "1|MSG|%ld|%s", strlen(body), body);
+                snprintf(message, sizeof(message), "1|MSG|%zu|%s", strlen(body), body);
                 send(sockfd, message, strlen(message), 0);
             }
         } else if (strncmp(input, "/who", 4) == 0) {
@@ -130,20 +130,20 @@ int main(int argc, char *argv[]) {
             
             char body[BUFFER_SIZE];
             snprintf(body, sizeof(body), "%s|", target);
-            snprintf(message, sizeof(message), "1|WHO|%ld|%s", strlen(body), body);
+            snprintf(message, sizeof(message), "1|WHO|%zu|%s", strlen(body), body);
             send(sockfd, message, strlen(message), 0);
         } else if (strncmp(input, "/status ", 8) == 0) {
             // Set status
             char *status = input + 8;
             char body[BUFFER_SIZE];
             snprintf(body, sizeof(body), "%s|", status);
-            snprintf(message, sizeof(message), "1|SET|%ld|%s", strlen(body), body);
+            snprintf(message, sizeof(message), "1|SET|%zu|%s", strlen(body), body);
             send(sockfd, message, strlen(message), 0);
         } else {
             // Regular message to #all
             char body[BUFFER_SIZE];
             snprintf(body, sizeof(body), "||#all|%s|", input);
-            snprintf(message, sizeof(message), "1|MSG|%ld|%s", strlen(body), body);
+            snprintf(message, sizeof(message), "1|MSG|%zu|%s", strlen(body), body);
             send(sockfd, message, strlen(message), 0);
         }
     }

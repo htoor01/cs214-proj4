@@ -3,284 +3,129 @@ Authors: Haaris Toor (hbt20), Hassan Ibrahim (hi125)
 
 OVERVIEW
 ========
-This project implements a simple Internet chat server (chatd) that supports
-multiple clients connecting simultaneously. The server forwards messages between
-clients, manages unique screen names, and handles user queries.
-
-FEATURES
-========
-- Multi-client support using multithreading/poll
-- User authentication with unique screen names
-- Room-based messaging (default room: #all)
-- Private messaging between users
-- User status management
-- User listing and queries
-- Error handling and validation
-
-PROTOCOL
-========
-The server implements a text-based protocol with the following message types:
-- NAM: Set user screen name
-- SET: Set user status
-- MSG: Send/receive messages
-- WHO: Query user information
-- ERR: Error responses
-
-Message Format: VERSION|CODE|LENGTH|FIELDS...|
-
-Example messages:
-- NAM: 1|NAM|4|Bob|
-- MSG: 1|MSG|23|Bob|#all|Hello, world!|
-- WHO: 1|WHO|5|#all|
-- ERR: 1|ERR|15|1|Name in use|
+chatd is a multithreaded TCP chat server that supports multiple simultaneous
+clients. Clients authenticate with a unique screen name, send public or private
+messages, set a status string, and query connected users.
 
 BUILDING
 ========
-To compile the server and test client:
-    make
+    make          # builds chatd and test_client
+    make clean    # removes binaries and object files
 
-To clean build artifacts:
-    make clean
+Requires: gcc, pthreads. Tested on Linux (ILAB) and macOS.
 
 USAGE
 =====
     ./chatd <port>
 
-Where <port> is the port number on which the server will listen for connections.
-
 Example:
-    ./chatd 8080
+    ./chatd 9999
 
-To test with the included test client:
-    ./test_client localhost 8080 YourName
+PROTOCOL SUMMARY
+================
+All messages follow the format: VERSION|CODE|LENGTH|BODY
+- VERSION: always "1"
+- CODE: NAM, SET, MSG, WHO, or ERR
+- LENGTH: byte count of BODY (including the trailing '|')
+- BODY: pipe-delimited fields ending with '|'
+
+Message types:
+  NAM  Client sets screen name:   body = screen_name|
+  SET  Client sets status:        body = status|
+  MSG  Client sends message:      body = sender|recipient|text|
+                                  (sender field is empty/ignored from client)
+  WHO  Client queries user info:  body = name| or #all|
+  ERR  Server error response:     body = code|explanation|
+
+Error codes:
+  0 - Unreadable message (fatal: connection closed)
+  1 - Screen name in use
+  2 - Unknown recipient
+  3 - Illegal character in field
+  4 - Field too long
 
 IMPLEMENTATION NOTES
 ====================
-- Uses multithreading for handling multiple clients
-- Mutex locks protect shared data structures
-- Screen names: 1-32 characters (letters, digits, hyphen, underscore)
-- Status messages: 0-64 characters (ASCII 32-126)
-- Chat messages: 1-80 characters (ASCII 32-126)
+- One thread per client; clients_mutex protects the global client list.
+- Per-client accumulation buffer handles partial TCP reads and multiple
+  messages arriving in a single recv() call.
+- MSG body parsed with strchr/strrchr (not strtok) to correctly handle
+  the empty sender field and '|' characters inside message text.
+- Duplicate-name check and client-list insertion are atomic under the mutex.
+- SIGPIPE is ignored; failed sends to dead clients return EPIPE silently.
+- Sender field in MSG is always overwritten with client->screen_name
+  (prevents spoofing).
 
-PROJECT STRUCTURE
-=================
-Core Files:
-- chatd.c       - Main server implementation with threading support
-- protocol.h    - Protocol definitions and function prototypes
-- protocol.c    - Protocol parsing and message formatting functions
-- Makefile      - Build system
-
-Testing Files:
-- test_client.c - Simple interactive test client
-- test.sh       - Bash script for automated testing
-
-IMPLEMENTATION GUIDE
-====================
-The skeleton code contains TODO comments marking what needs to be implemented.
-
-Priority 1: Protocol Parsing (protocol.c)
-------------------------------------------
-Complete the parse_message() function:
-1. Use strtok() or manual parsing to extract fields separated by '|'
-2. Extract version field and verify it equals "1"
-3. Extract code field (3 characters: NAM, SET, MSG, WHO, ERR)
-4. Extract length field (up to 5 digits, convert to integer)
-5. Read exactly 'length' bytes for the body
-6. Verify the body ends with '|'
-7. Store parsed data in message_t structure
-8. Return 0 on success, -1 on error
-
-Hints:
-- Use strdup() to allocate memory for the body
-- Be careful about null terminators vs actual message content
-- The length field counts bytes in the body INCLUDING the final '|'
-
-Priority 2: Client Message Loop (chatd.c)
-------------------------------------------
-In handle_client(), implement the main message loop:
-1. Read data from socket into buffer (handle partial reads!)
-2. Call parse_message() to parse the incoming message
-3. Check message code and route to appropriate handler:
-   - "NAM" -> handle_nam_message()
-   - "SET" -> handle_set_message()
-   - "MSG" -> handle_msg_message()
-   - "WHO" -> handle_who_message()
-4. On parse error, send error 0 (unreadable) and close connection
-5. Call free_message() to clean up after each message
-6. Handle client disconnect gracefully
-
-Important: Clients must send NAM before any other message!
-
-Priority 3: NAM Handler (chatd.c)
-----------------------------------
-Implement handle_nam_message():
-1. Extract screen name from body (remove trailing '|')
-2. Call validate_screen_name() to check format
-3. If invalid format: send error 3 (illegal character) or 4 (too long)
-4. Call find_client_by_name() to check if name already in use
-5. If in use: send error 1 (name in use)
-6. If valid and unique:
-   - Copy screen name to client->screen_name
-   - Set client->authenticated = 1
-   - Call add_client() to add to global list
-   - Use create_msg_message() to send welcome from #all
-7. Example: create_msg_message("#all", screen_name, "Welcome to the chat!")
-
-Priority 4: MSG Handler (chatd.c)
-----------------------------------
-Implement handle_msg_message():
-1. Parse body to extract three fields: sender|recipient|text|
-   (Use strtok with '|' delimiter)
-2. IMPORTANT: Ignore the sender field sent by client (prevent spoofing!)
-3. Use client->screen_name as the actual sender
-4. Validate message text with validate_message_text()
-5. If invalid: send error 3 or 4
-6. If recipient is "#all":
-   - Use broadcast_message() to send to all authenticated clients
-   - Create message with create_msg_message(client->screen_name, "#all", text)
-7. If recipient is specific user:
-   - Use find_client_by_name() to locate recipient
-   - If not found: send error 2 (unknown recipient)
-   - If found: use send_to_client() to send only to that user
-   - Create message with create_msg_message(client->screen_name, recipient, text)
-
-Priority 5: SET Handler (chatd.c)
-----------------------------------
-Implement handle_set_message():
-1. Extract status from body (remove trailing '|')
-2. Call validate_status() to check format
-3. If invalid: send error 3 or 4
-4. Copy status to client->status
-5. If status is non-empty:
-   - Create message like "Bob is now \"Smiling politely\""
-   - Use create_msg_message("#all", "#all", formatted_message)
-   - Call broadcast_message() to notify all users
-
-Priority 6: WHO Handler (chatd.c)
-----------------------------------
-Implement handle_who_message():
-1. Extract target from body (remove trailing '|')
-2. If target is "#all":
-   - Lock clients_mutex
-   - Iterate through all authenticated clients
-   - Build response string with format: "name: status\nname2: status2\nname3"
-   - Users with no status: just print the name
-   - Unlock mutex
-3. If target is specific user:
-   - Use find_client_by_name() to find user
-   - If not found: send error 2 (unknown recipient)
-   - If found: format as "name: status" or "No status"
-4. Send response using create_msg_message("#all", client->screen_name, response)
-
-Priority 7: Error Handling
----------------------------
-Implement error responses throughout:
-- Use create_err_message(code, explanation) to create error messages
-- Error 0 is FATAL: after sending, close connection and return
-- Errors 1-4 are recoverable: send error and continue
-- Always validate user input before processing
-
-COMMON PITFALLS
-===============
-1. Buffer overflows: Always validate lengths before copying strings
-2. Race conditions: Always lock clients_mutex before accessing client list
-3. Partial reads: Socket recv() may not receive full message at once
-4. Memory leaks: Free allocated messages with free_message() and free()
-5. Error 0 vs others: Only error 0 should close the connection
-6. Sender spoofing: Always override sender field with client->screen_name
-7. Deadlocks: Be careful with mutex lock ordering
-
-DEVELOPMENT TIPS
-================
-1. Start with parse_message() - everything else depends on it
-2. Test NAM and basic connection handling first
-3. Test with single client before testing multiple clients
-4. Use telnet or netcat for manual protocol testing:
-   telnet localhost 8080
-   1|NAM|4|Bob|
-5. Add debug printf statements to trace message flow
-6. Test error cases systematically
-7. Use valgrind to check for memory leaks:
-   valgrind --leak-check=full ./chatd 8080
-8. The test_client.c provides a working example of the protocol
-
-QUICK START
-===========
-1. Read through all the skeleton code files
-2. Understand the protocol format from the project spec
-3. Implement parse_message() in protocol.c (needed by everything)
-4. Implement the handle_client() message loop in chatd.c
-5. Implement handlers one at a time, testing after each:
-   - handle_nam_message()
-   - handle_msg_message()
-   - handle_set_message()
-   - handle_who_message()
-6. Build comprehensive test cases
-7. Test edge cases and error conditions
-8. Run valgrind to check for memory leaks
+Field limits:
+  Screen names: 1-32 characters (letters, digits, '-', '_')
+  Status:       0-64 characters (ASCII 32-126)
+  Message text: 1-80 characters (ASCII 32-126)
 
 TEST PLAN
 =========
-1. Connection Testing
-   - Test multiple clients connecting simultaneously
-   - Test client disconnection and reconnection
-   - Test maximum connections
+Automated tests are in test.sh. Run with:
+    bash test.sh
 
-2. Screen Name Testing
-   - Test valid screen names (letters, digits, hyphen, underscore)
-   - Test invalid characters in screen names
-   - Test duplicate screen names
-   - Test screen name length limits (1-32 characters)
+The script starts chatd on port 9999, sends raw protocol messages via nc
+(netcat), captures responses, and checks for expected content.
 
-3. Message Broadcasting
-   - Test messages sent to #all room
-   - Verify all connected users receive broadcast messages
-   - Test message length limits (1-80 characters)
-   - Test invalid characters in messages
+Test 1: NAM — successful authentication
+  Send:   1|NAM|6|Alice|
+  Expect: response contains "Welcome to the chat"
+  Checks: server sends MSG welcome on successful NAM
 
-4. Private Messaging
-   - Test sending private messages to specific users
-   - Test sending to non-existent users (should error)
-   - Verify only intended recipient receives message
+Test 2: Duplicate screen name (ERR 1)
+  Setup:  Connect Alice and keep connection open (sleep 2)
+  Send:   1|NAM|6|Alice| from a second connection
+  Expect: response contains "already in use"
+  Checks: atomic duplicate detection; second client rejected with ERR 1
 
-5. Status Management
-   - Test setting user status
-   - Test status length limits (0-64 characters)
-   - Test status character validation
-   - Verify status broadcasts to #all
+Test 3: Invalid screen name characters (ERR 3)
+  Send:   1|NAM|6|Bob@!|
+  Expect: response contains "ERR"
+  Checks: validate_screen_name rejects '@' and '!'
 
-6. User Queries (WHO)
-   - Test querying specific user information
-   - Test querying all users in #all
-   - Test querying non-existent users
-   - Verify response format
+Test 4: SET status — multi-message session
+  Send:   1|NAM|4|Bob|1|SET|10|Chatting!|  (two messages, no separator)
+  Expect: response contains "Bob is now"
+  Checks: accumulation buffer correctly processes second message after NAM;
+          SET handler broadcasts status change to #all
 
-7. Error Handling
-   - Test error 0: Unreadable/malformed messages
-   - Test error 1: Name in use
-   - Test error 2: Unknown recipient
-   - Test error 3: Illegal character
-   - Test error 4: Too long
-   - Verify connection closed after error 0
+Test 5: WHO single user
+  Setup:  Connect Carol with status "Online!" (sleep 10 to keep alive)
+  Send:   1|NAM|5|Dave|1|WHO|6|Carol|
+  Expect: response contains "Carol: Online!"
+  Checks: WHO returns name+status for named user; status survives across
+          messages in the same buffered session
 
-8. Protocol Compliance
-   - Test message format parsing
-   - Test protocol version validation
-   - Test message length field accuracy
-   - Test proper message termination with |
+Test 6: WHO #all
+  Send:   1|NAM|4|Eve|1|WHO|5|#all|
+  Expect: response contains "Eve"
+  Checks: WHO #all lists all currently authenticated clients
 
-9. Stress Testing
-   - Test rapid message sending
-   - Test many simultaneous connections
-   - Test long-running sessions
+Test 7: MSG broadcast to #all
+  Send:   1|NAM|6|Frank|1|MSG|22||#all|Hello everyone!|
+  Expect: response contains "Frank|#all|Hello everyone"
+  Checks: empty sender field parsed correctly; broadcast MSG echoed back
+          to sender; sender field overwritten with screen_name
 
-10. Edge Cases
-    - Test empty fields where applicable
-    - Test boundary values for lengths
-    - Test special characters within allowed ranges
-    - Test client disconnect during message transmission
+Test 8: MSG private message (no error)
+  Setup:  Connect Grace (sleep 10 to keep alive)
+  Send:   1|NAM|5|Hank|1|MSG|23||Grace|Private message|
+  Expect: no ERR response (exit 0 from nc)
+  Checks: private message delivered without error when recipient exists
 
-Testing Tools:
-- Custom test clients using sockets
-- telnet for manual protocol testing
-- Automated test scripts for regression testing
+Test 9: MSG to unknown recipient (ERR 2)
+  Send:   1|NAM|4|Ivy|1|MSG|19||NoSuchUser|Hello?|
+  Expect: response contains "User not found"
+  Checks: handle_msg_message returns ERR 2 for non-existent recipient
+
+Test 10: Invalid protocol version (ERR 0, connection closed)
+  Send:   0|NAM|4|Bob|
+  Expect: response matches pattern ERR|<N>|0|
+  Checks: parse_message rejects version != "1"; server sends ERR 0 and
+          closes the connection (fatal error path)
+
+Manual testing was also performed using ./test_client to exercise
+interactive sessions: connecting multiple clients, sending messages between
+them, and verifying delivery in real time.

@@ -179,12 +179,15 @@ char *create_set_message(const char *status) {
 
 char *create_msg_message(const char *sender, const char *recipient, const char *text) {
     if (!sender || !recipient || !text) return NULL;
-    
-    // Body format: sender|recipient|text|
-    char body[MAX_MSG_LENGTH];
-    snprintf(body, sizeof(body), "%s|%s|%s|", sender, recipient, text);
-    
-    return format_message(MSG_MSG, body);
+
+    /* avoid giant stack frame */
+    size_t body_size = strlen(sender) + strlen(recipient) + strlen(text) + 4;
+    char *body = malloc(body_size);
+    if (!body) return NULL;
+    snprintf(body, body_size, "%s|%s|%s|", sender, recipient, text);
+    char *result = format_message(MSG_MSG, body);
+    free(body);
+    return result;
 }
 
 char *create_who_message(const char *target) {
@@ -199,12 +202,14 @@ char *create_who_message(const char *target) {
 
 char *create_err_message(int error_code, const char *explanation) {
     if (!explanation) return NULL;
-    
-    // Body format: error_code|explanation|
-    char body[MAX_MSG_LENGTH];
-    snprintf(body, sizeof(body), "%d|%s|", error_code, explanation);
-    
-    return format_message(MSG_ERR, body);
+
+    size_t body_size = strlen(explanation) + 12; /* "N|explanation|" + slack */
+    char *body = malloc(body_size);
+    if (!body) return NULL;
+    snprintf(body, body_size, "%d|%s|", error_code, explanation);
+    char *result = format_message(MSG_ERR, body);
+    free(body);
+    return result;
 }
 
 void free_message(message_t *msg) {
