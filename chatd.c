@@ -295,21 +295,23 @@ void send_to_client(client_t *client, const char *message) {
 }
 
 void handle_nam_message(client_t *client, const char *body) {
-    /* Ignore re-NAM from an already-authenticated client */
     if (client->authenticated) return;
 
-    char name[MAX_SCREEN_NAME + 1];
-    strncpy(name, body, sizeof(name) - 1);
-    name[sizeof(name) - 1] = '\0';
+    const char *pipe = strchr(body, '|');
+    size_t name_len = pipe ? (size_t)(pipe - body) : strlen(body);
 
-    char *pipe = strchr(name, '|');
-    if (pipe) *pipe = '\0';
+    if (name_len == 0 || name_len > MAX_SCREEN_NAME) {
+        char *err = create_err_message(ERR_TOO_LONG, "Name must be 1-32 characters");
+        if (err) { send_to_client(client, err); free(err); }
+        return;
+    }
+
+    char name[MAX_SCREEN_NAME + 1];
+    memcpy(name, body, name_len);
+    name[name_len] = '\0';
 
     if (!validate_screen_name(name)) {
-        size_t len = strlen(name);
-        char *err = (len == 0 || len > MAX_SCREEN_NAME)
-            ? create_err_message(ERR_TOO_LONG,    "Name must be 1-32 characters")
-            : create_err_message(ERR_ILLEGAL_CHAR, "Name contains invalid characters");
+        char *err = create_err_message(ERR_ILLEGAL_CHAR, "Name contains invalid characters");
         if (err) { send_to_client(client, err); free(err); }
         return;
     }
@@ -330,18 +332,21 @@ void handle_nam_message(client_t *client, const char *body) {
 }
 
 void handle_set_message(client_t *client, const char *body) {
-    char status[MAX_STATUS + 1];
-    strncpy(status, body, sizeof(status) - 1);
-    status[sizeof(status) - 1] = '\0';
+    const char *pipe = strchr(body, '|');
+    size_t status_len = pipe ? (size_t)(pipe - body) : strlen(body);
 
-    char *pipe = strchr(status, '|');
-    if (pipe) *pipe = '\0';
+    if (status_len > MAX_STATUS) {
+        char *err = create_err_message(ERR_TOO_LONG, "Status must be 0-64 characters");
+        if (err) { send_to_client(client, err); free(err); }
+        return;
+    }
+
+    char status[MAX_STATUS + 1];
+    memcpy(status, body, status_len);
+    status[status_len] = '\0';
 
     if (!validate_status(status)) {
-        size_t len = strlen(status);
-        char *err = (len > MAX_STATUS)
-            ? create_err_message(ERR_TOO_LONG,    "Status must be 0-64 characters")
-            : create_err_message(ERR_ILLEGAL_CHAR, "Status contains invalid characters");
+        char *err = create_err_message(ERR_ILLEGAL_CHAR, "Status contains invalid characters");
         if (err) { send_to_client(client, err); free(err); }
         return;
     }
@@ -475,7 +480,7 @@ void handle_who_message(client_t *client, const char *body) {
             return;
         }
 
-        char response[MAX_SCREEN_NAME + MAX_STATUS + 10];
+        char response[MAX_SCREEN_NAME + MAX_STATUS + 20];
         if (strlen(status_copy) > 0)
             snprintf(response, sizeof(response), "%s: %s", target, status_copy);
         else

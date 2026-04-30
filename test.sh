@@ -53,7 +53,7 @@ test_pass "Server started on port $PORT"
 # Test 1: NAM message (authentication)
 # body "Alice|" = 6 bytes
 echo -e "\n${YELLOW}Test 1: Authentication (NAM)${NC}"
-RESPONSE=$(printf '1|NAM|6|Alice|' | nc localhost $PORT 2>/dev/null)
+RESPONSE=$(printf '1|NAM|6|Alice|' | nc -q 1 localhost $PORT 2>/dev/null)
 if echo "$RESPONSE" | grep -q "Welcome to the chat"; then
     test_pass "NAM: User authenticated successfully"
 else
@@ -63,9 +63,9 @@ fi
 
 # Test 2: Duplicate name
 echo -e "\n${YELLOW}Test 2: Duplicate screen name${NC}"
-(printf '1|NAM|6|Alice|'; sleep 2) | nc localhost $PORT > /dev/null 2>&1 &
+(printf '1|NAM|6|Alice|'; sleep 2) | nc -q 1 localhost $PORT > /dev/null 2>&1 &
 sleep 0.5
-RESPONSE=$(printf '1|NAM|6|Alice|' | nc localhost $PORT 2>/dev/null)
+RESPONSE=$(printf '1|NAM|6|Alice|' | nc -q 1 localhost $PORT 2>/dev/null)
 if echo "$RESPONSE" | grep -q "already in use"; then
     test_pass "Error 1: Duplicate name rejected"
 else
@@ -75,7 +75,7 @@ fi
 # Test 3: Invalid screen name
 # body "Bob@!|" = 6 bytes
 echo -e "\n${YELLOW}Test 3: Invalid screen name${NC}"
-RESPONSE=$(printf '1|NAM|6|Bob@!|' | nc localhost $PORT 2>/dev/null)
+RESPONSE=$(printf '1|NAM|6|Bob@!|' | nc -q 1 localhost $PORT 2>/dev/null)
 if echo "$RESPONSE" | grep -q "ERR"; then
     test_pass "Error 3: Invalid characters detected"
 else
@@ -85,7 +85,7 @@ fi
 # Test 4: SET status (two messages in one session — exercises message buffering)
 # body "Bob|"=4, body "Chatting!|"=10
 echo -e "\n${YELLOW}Test 4: Set status (SET)${NC}"
-RESPONSE=$(printf '1|NAM|4|Bob|1|SET|10|Chatting!|' | nc localhost $PORT 2>/dev/null)
+RESPONSE=$(printf '1|NAM|4|Bob|1|SET|10|Chatting!|' | nc -q 1 localhost $PORT 2>/dev/null)
 if echo "$RESPONSE" | grep -q "Bob is now"; then
     test_pass "SET: Status update broadcast"
 else
@@ -96,9 +96,9 @@ fi
 # Carol: body "Carol|"=6, body "Online!|"=8
 # Dave:  body "Dave|"=5,  body "Carol|"=6
 echo -e "\n${YELLOW}Test 5: Query single user (WHO)${NC}"
-(printf '1|NAM|6|Carol|1|SET|8|Online!|'; sleep 10) | nc localhost $PORT > /dev/null 2>&1 &
+(printf '1|NAM|6|Carol|1|SET|8|Online!|'; sleep 10) | nc -q 1 localhost $PORT > /dev/null 2>&1 &
 sleep 0.5
-RESPONSE=$(printf '1|NAM|5|Dave|1|WHO|6|Carol|' | nc localhost $PORT 2>/dev/null)
+RESPONSE=$(printf '1|NAM|5|Dave|1|WHO|6|Carol|' | nc -q 1 localhost $PORT 2>/dev/null)
 if echo "$RESPONSE" | grep -q "Carol: Online!"; then
     test_pass "WHO: Single user query with status"
 else
@@ -109,7 +109,7 @@ fi
 # Test 6: WHO all users
 # body "Eve|"=4, body "#all|"=5
 echo -e "\n${YELLOW}Test 6: Query all users (WHO #all)${NC}"
-RESPONSE=$(printf '1|NAM|4|Eve|1|WHO|5|#all|' | nc localhost $PORT 2>/dev/null)
+RESPONSE=$(printf '1|NAM|4|Eve|1|WHO|5|#all|' | nc -q 1 localhost $PORT 2>/dev/null)
 if echo "$RESPONSE" | grep -q "Eve"; then
     test_pass "WHO: All users query"
 else
@@ -120,7 +120,7 @@ fi
 # body "Frank|"=6
 # MSG body "|#all|Hello everyone!|" = 1+4+1+15+1 = 22 bytes
 echo -e "\n${YELLOW}Test 7: Broadcast message (MSG to #all)${NC}"
-RESPONSE=$(printf '1|NAM|6|Frank|1|MSG|22||#all|Hello everyone!|' | nc localhost $PORT 2>/dev/null)
+RESPONSE=$(printf '1|NAM|6|Frank|1|MSG|22||#all|Hello everyone!|' | nc -q 1 localhost $PORT 2>/dev/null)
 if echo "$RESPONSE" | grep -q "Frank|#all|Hello everyone"; then
     test_pass "MSG: Broadcast message sent"
 else
@@ -130,15 +130,15 @@ fi
 # Test 8: Private message
 # MSG body "|Grace|Private message|" = 1+5+1+15+1 = 23 bytes
 echo -e "\n${YELLOW}Test 8: Private message (MSG to user)${NC}"
-(printf '1|NAM|6|Grace|'; sleep 10) | nc localhost $PORT > /dev/null 2>&1 &
+(printf '1|NAM|6|Grace|'; sleep 10) | nc -q 1 localhost $PORT > /dev/null 2>&1 &
 sleep 0.5
-printf '1|NAM|5|Hank|1|MSG|23||Grace|Private message|' | nc localhost $PORT > /dev/null 2>&1
+printf '1|NAM|5|Hank|1|MSG|23||Grace|Private message|' | nc -q 1 localhost $PORT > /dev/null 2>&1
 test_pass "MSG: Private message sent (no error)"
 
 # Test 9: Unknown recipient
 # MSG body "|NoSuchUser|Hello?|" = 1+10+1+6+1 = 19 bytes
 echo -e "\n${YELLOW}Test 9: Message to unknown user${NC}"
-RESPONSE=$(printf '1|NAM|4|Ivy|1|MSG|19||NoSuchUser|Hello?|' | nc localhost $PORT 2>/dev/null)
+RESPONSE=$(printf '1|NAM|4|Ivy|1|MSG|19||NoSuchUser|Hello?|' | nc -q 1 localhost $PORT 2>/dev/null)
 if echo "$RESPONSE" | grep -q "User not found"; then
     test_pass "Error 2: Unknown recipient detected"
 else
@@ -148,11 +148,39 @@ fi
 # Test 10: Invalid protocol (wrong version number — triggers ERR 0)
 # body "Bob|"=4; version "0" is invalid so parse_message returns -1
 echo -e "\n${YELLOW}Test 10: Invalid protocol message${NC}"
-RESPONSE=$(printf '0|NAM|4|Bob|' | nc localhost $PORT 2>/dev/null)
+RESPONSE=$(printf '0|NAM|4|Bob|' | nc -q 1 localhost $PORT 2>/dev/null)
 if echo "$RESPONSE" | grep -qE "ERR\|[0-9]+\|0\|"; then
     test_pass "Error 0: Invalid format detected"
 else
     test_fail "Error 0: Invalid format not detected"
+fi
+
+# Test 11: Screen name too long (ERR 4)
+# 33 A's + trailing | = 34 bytes
+echo -e "\n${YELLOW}Test 11: Screen name too long (ERR 4)${NC}"
+LONGNAME=$(printf '%33s' | tr ' ' 'A')
+NAMBODY="${LONGNAME}|"
+NAMBODYLEN=${#NAMBODY}
+RESPONSE=$(printf "1|NAM|%d|%s" "$NAMBODYLEN" "$NAMBODY" | nc -q 1 localhost $PORT 2>/dev/null)
+if echo "$RESPONSE" | grep -qE "ERR\|[0-9]+\|4\|"; then
+    test_pass "Error 4: Name too long rejected"
+else
+    test_fail "Error 4: Name too long not rejected"
+    echo "Response: $RESPONSE"
+fi
+
+# Test 12: Message text too long (ERR 4)
+# 81-char message body: "|#all|AAA...(81 A's)|" = 1+4+1+81+1 = 88 bytes
+echo -e "\n${YELLOW}Test 12: Message text too long (ERR 4)${NC}"
+LONGTEXT=$(printf '%81s' | tr ' ' 'A')
+MSGBODY="|#all|${LONGTEXT}|"
+MSGBODYLEN=${#MSGBODY}
+RESPONSE=$(printf "1|NAM|5|Zara|1|MSG|%d|%s" "$MSGBODYLEN" "$MSGBODY" | nc -q 1 localhost $PORT 2>/dev/null)
+if echo "$RESPONSE" | grep -qE "ERR\|[0-9]+\|4\|"; then
+    test_pass "Error 4: Message too long rejected"
+else
+    test_fail "Error 4: Message too long not rejected"
+    echo "Response: $RESPONSE"
 fi
 
 echo -e "\n${GREEN}All tests completed!${NC}"

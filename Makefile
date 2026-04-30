@@ -2,7 +2,7 @@
 # Authors: Haaris Toor (hbt20), Hassan Ibrahim (hi125)
 
 CC = gcc
-CFLAGS = -Wall -Wextra -Werror -std=c99 -pthread -g
+CFLAGS = -Wall -Wextra -Werror -std=c99 -pthread -g -D_POSIX_C_SOURCE=200809L
 LDFLAGS = -pthread
 
 TARGET = chatd
@@ -19,7 +19,7 @@ $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(TEST_CLIENT): $(TEST_CLIENT).c
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
+	$(CC) $(filter-out -Werror,$(CFLAGS)) $(LDFLAGS) -o $@ $<
 
 %.o: %.c $(HEADERS)
 	$(CC) $(CFLAGS) -c $<
